@@ -5,16 +5,24 @@ import { connect } from "@/dbConfig/dbConfig";
 import jwt from "jsonwebtoken";
 
 export async function POST(request: NextRequest) {
-  await connect();
-
   try {
-    const { email, password } = await request.json();
+    await connect(); // ensure DB is connected
 
-    const normalizedEmail = email.toLowerCase().trim();
-    const user = await User.findOne({ email: normalizedEmail });
+    const reqBody = await request.json();
+    const { email: rawEmail, password: rawPassword } = reqBody;
 
+    const email = rawEmail.toLowerCase().trim();
+    const password = rawPassword;
+
+    console.log("📥 Login request:", reqBody);
+
+    const user = await User.findOne({ email });
     if (!user) {
-      return NextResponse.json({ message: "User not found" }, { status: 400 });
+      console.log("❌ User not found for email:", email);
+      return NextResponse.json(
+        { message: "User not found, please signup" },
+        { status: 400 }
+      );
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -22,29 +30,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Invalid credentials" }, { status: 400 });
     }
 
-    const token = jwt.sign(
-      { id: user._id, username: user.username, email: user.email },
-      process.env.TOKEN_SECRET!,
-      { expiresIn: "1d" }
-    );
+    const tokenData = { id: user._id, username: user.username, email: user.email };
+    const token = jwt.sign(tokenData, process.env.TOKEN_SECRET!, { expiresIn: "1d" });
 
-    const res = NextResponse.json({
+    const response = NextResponse.json({
       message: "User logged in successfully",
       success: true,
-      user: { id: user._id, username: user.username, email: user.email },
+      user: tokenData,
     });
 
-    res.cookies.set("token", token, {
+    response.cookies.set("token", token, {
       httpOnly: true,
-      secure: false, // true in production
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 24,
     });
 
-    return res;
-  } catch (err: any) {
-    console.error("🔥 Login error:", err);
-    return NextResponse.json({ message: err.message }, { status: 500 });
+    return response;
+  } catch (error: unknown) {
+    const e = error as Error;
+    console.error("🔥 Login error:", e.message);
+    return NextResponse.json({ message: e.message }, { status: 500 });
   }
 }
